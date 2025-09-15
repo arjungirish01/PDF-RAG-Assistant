@@ -3,7 +3,8 @@
 A user-friendly web application that leverages a Retrieval-Augmented Generation (RAG) pipeline to answer questions about the content of any uploaded PDF document.
 
 **
-<img width="1825" height="557" alt="RAG" src="https://github.com/user-attachments/assets/f9577c61-f77d-4456-b031-f9defbbd2824" />
+
+<img width="1853" height="581" alt="RAG-APP" src="https://github.com/user-attachments/assets/9127a30a-7fa9-4290-ada1-bfb709c6d682" />
 
 ---
 
