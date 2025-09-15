@@ -49,7 +49,7 @@ You can run this application either locally on your machine or using Docker.
 
 **1. Clone the repository:**
 ```bash
-git clone [[https://github.com/your-username/PDF-RAG-Assistant.git](https://github.com/your-username/PDF-RAG-Assistant.git](https://github.com/arjungirish01/PDF-RAG-Assistant.git)
+git clone [(https://github.com/arjungirish01/PDF-RAG-Assistant.git)]
 cd PDF-RAG-Assistant
 ```
 
