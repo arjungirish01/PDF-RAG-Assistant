@@ -1,31 +1,17 @@
 import streamlit as st
 import os
-from langchain_openai import  ChatOpenAI
-from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
-from helper_fn import pdf_to_embeddings,format_doc,format_prompt
+import time
+from dotenv import load_dotenv
+from helper_fn import pdf_to_embeddings, format_doc, format_prompt
+from langchain_openai import ChatOpenAI
+from langchain.schema.runnable import RunnableLambda, RunnablePassthrough, RunnableMap
+load_dotenv()
 
-#Main RAG Chain Logic
-
-def get_rag_chain(vectorstore, openai_api_key):
-    """Creates the main RAG chain for querying."""
-    llm = ChatOpenAI(model='gpt-4.1-nano', openai_api_key=openai_api_key)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-
-    # This is the RAG chain that takes a query and returns a response
-    chain = {
-        "context": retriever | RunnableLambda(format_doc),
-        "query": RunnablePassthrough(),
-    } | RunnableLambda(lambda x: format_prompt(x["context"], x["query"])) | llm
-
-    return chain
-
-
-#Streamlit UI
-
+# Streamlit Configuration
 st.set_page_config(page_title="PDF RAG Assistant", layout="wide")
-st.title("PDF RAG Assistant")
+st.title("PDF RAG ASSISTANT ")
 
-# Sidebar for API key and file upload
+# Sidebar configuration
 with st.sidebar:
     st.header("Configuration")
     openai_api_key = st.text_input(
@@ -36,15 +22,25 @@ with st.sidebar:
     )
 
     st.header("Upload PDF")
-    uploaded_file = st.file_uploader("Upload your PDF file here and click 'Process'", type="pdf")
+    uploaded_file = st.file_uploader("Upload your PDF file and click 'Process'", type="pdf")
 
-# Main panel
+    st.markdown("---")
+    use_cache = st.checkbox("Use persistent FAISS cache (recommended)", value=True)
+    show_context = st.checkbox("Show retrieved context", value=False)
+
+# Helper to handle LLM output
+def _response_to_text(resp):
+    if hasattr(resp, "content"):
+        return resp.content
+    return str(resp)
+
+# Main app logic
 if uploaded_file:
     temp_dir = "temp"
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
-
+    os.makedirs(temp_dir, exist_ok=True)
     temp_path = os.path.join(temp_dir, uploaded_file.name)
+
+    # Save uploaded PDF to disk
     with open(temp_path, "wb") as f:
         f.write(uploaded_file.getvalue())
 
@@ -58,20 +54,80 @@ if uploaded_file:
         elif not user_query:
             st.warning("Please enter a question.")
         else:
-            with st.spinner("Processing your request..."):
-                try:
-                    # Create vector store from the PDF
-                    vectorstore = pdf_to_embeddings(temp_path, openai_api_key)
+            try:
+                start_all = time.time()
+                st.write("Building or loading FAISS index...")
+
+                # Load or build FAISS vector store
+                vectorstore = pdf_to_embeddings(
+                    pdf_path=temp_path,
+                    openai_api_key=openai_api_key,
+                    use_cache=use_cache
+                )
+
+                # Determine if cache was reused or built fresh
+                faiss_dir = temp_path + "_faiss_index"
+                if os.path.exists(faiss_dir):
+                    st.success(f"Using persistent FAISS index at `{faiss_dir}`")
+                else:
+                    st.info("Built new FAISS index from PDF text chunks.")
+
+            
+                # Create modular RAG pipeline
+
+                retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+                context_runnable = retriever | RunnableLambda(format_doc)
+                prompt_runnable = RunnableLambda(lambda x: format_prompt(x["context"], x["query"]))
+
+                llm = ChatOpenAI(
+                    model="gpt-4.1-nano",
+                    openai_api_key=openai_api_key,
+                    temperature=0.2,
+                )
+
+                rag_pipeline = (
+                    RunnableMap({
+                        "context": context_runnable,
+                        "query": RunnablePassthrough(),
+                    })
+                    | prompt_runnable
+                    | llm
+                )
+
+               
+                # Retrieve top documents
+            
+                top_docs = retriever.invoke(user_query)
+                if not top_docs:
+                    st.warning("No relevant context found in the document.")
+                    st.write("Try rephrasing your question or uploading another document.")
+                else:
+                    if show_context:
+                        st.markdown("Retrieved Context Chunks")
+                        for i, d in enumerate(top_docs[:4], 1):
+                            md = d.metadata or {}
+                            page_info = f"(page {md.get('page', '?')})" if "page" in md else ""
+                            st.write(f"Chunk {i} {page_info}:")
+                            st.write(d.page_content[:400] + ("..." if len(d.page_content) > 400 else ""))
+
                     
-                    # Create and run the RAG chain
-                    rag_chain = get_rag_chain(vectorstore, openai_api_key)
-                    response = rag_chain.invoke(user_query)
-                    
-                    # Display the response
-                    st.success("Here is the answer:")
-                    st.write(response.content)
-                except Exception as e:
-                    st.error(f"An error occurred: {e}")
+                    # Run RAG pipeline
+                
+                    t0 = time.time()
+                    resp = rag_pipeline.invoke(user_query)
+                    latency = time.time() - t0
+
+                    answer = _response_to_text(resp)
+                    st.success("Answer:")
+                    st.write(answer)
+
+                    total_time = time.time() - start_all
+                    st.markdown(
+                        f"Query time: {latency:.2f}s (generation) | Total: {total_time:.2f}s"
+                    )
+
+            except Exception as e:
+                st.error(f"Error: {type(e).__name__}: {e}")
 
 else:
-    st.info("Please upload a PDF file using the sidebar to get started.")
+    st.info("Please upload a PDF using the sidebar to get started.")
